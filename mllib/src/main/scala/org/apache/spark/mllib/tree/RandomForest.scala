@@ -67,7 +67,7 @@ import org.apache.spark.util.Utils
 private class RandomForest (
     private val strategy: Strategy,
     private val numTrees: Int,
-    featureSubsetStrategy: String,
+    featureSubsetStrategy: Int => Int,
     private val seed: Int)
   extends Serializable with Logging {
 
@@ -114,9 +114,12 @@ private class RandomForest (
 
   strategy.assertValid()
   require(numTrees > 0, s"RandomForest requires numTrees > 0, but was given numTrees = $numTrees.")
+
+  /*
   require(RandomForest.supportedFeatureSubsetStrategies.contains(featureSubsetStrategy),
     s"RandomForest given invalid featureSubsetStrategy: $featureSubsetStrategy." +
     s" Supported values: ${RandomForest.supportedFeatureSubsetStrategies.mkString(", ")}.")
+  */
 
   /**
    * Method to train a decision tree model over an RDD
@@ -155,6 +158,8 @@ private class RandomForest (
     // Cache input RDD for speedup during multiple passes.
     val treeInput = TreePoint.convertToTreeRDD(retaggedInput, bins, metadata)
 
+
+    // FIX ME SO THAT WE CAN SUBSAMPLE SINGLE TREES FOR GBDT
     val (subsample, withReplacement) = {
       // TODO: Have a stricter check for RF in the strategy
       val isRandomForest = numTrees > 1
@@ -284,7 +289,8 @@ object RandomForest extends Serializable with Logging {
       seed: Int): RandomForestModel = {
     require(strategy.algo == Classification,
       s"RandomForest.trainClassifier given Strategy with invalid algo: ${strategy.algo}")
-    val rf = new RandomForest(strategy, numTrees, featureSubsetStrategy, seed)
+    val rf = new RandomForest(strategy, numTrees, DecisionTreeMetadata.buildFeatureSubsetStrategy(
+                              featureSubsetStrategy, numTrees, strategy.algo), seed)
     rf.run(input)
   }
 
@@ -366,7 +372,7 @@ object RandomForest extends Serializable with Logging {
       input: RDD[LabeledPoint],
       strategy: Strategy,
       numTrees: Int,
-      featureSubsetStrategy: String,
+      featureSubsetStrategy: Int => Int,
       seed: Int): RandomForestModel = {
     require(strategy.algo == Regression,
       s"RandomForest.trainRegressor given Strategy with invalid algo: ${strategy.algo}")
@@ -402,11 +408,11 @@ object RandomForest extends Serializable with Logging {
       input: RDD[LabeledPoint],
       categoricalFeaturesInfo: Map[Int, Int],
       numTrees: Int,
-      featureSubsetStrategy: String,
+      featureSubsetStrategy: Int => Int,
       impurity: String,
       maxDepth: Int,
       maxBins: Int,
-      seed: Int = Utils.random.nextInt()): RandomForestModel = {
+      seed: Int): RandomForestModel = {
     val impurityType = Impurities.fromString(impurity)
     val strategy = new Strategy(Regression, impurityType, maxDepth,
       0, maxBins, Sort, categoricalFeaturesInfo)
@@ -429,6 +435,76 @@ object RandomForest extends Serializable with Logging {
       categoricalFeaturesInfo.asInstanceOf[java.util.Map[Int, Int]].asScala.toMap,
       numTrees, featureSubsetStrategy, impurity, maxDepth, maxBins, seed)
   }
+
+
+  /**
+   * Method to train a decision tree model for regression.
+   *
+   * @param input Training dataset: RDD of [[org.apache.spark.mllib.regression.LabeledPoint]].
+   *              Labels are real numbers.
+   * @param strategy Parameters for training each tree in the forest.
+   * @param numTrees Number of trees in the random forest.
+   * @param featureSubsetStrategy Number of features to consider for splits at each node.
+   *                              Supported: "auto", "all", "sqrt", "log2", "onethird".
+   *                              If "auto" is set, this parameter is set based on numTrees:
+   *                                if numTrees == 1, set to "all";
+   *                                if numTrees > 1 (forest) set to "onethird".
+   * @param seed  Random seed for bootstrapping and choosing feature subsets.
+   * @return a random forest model that can be used for prediction
+   */
+  def trainRegressor(
+                      input: RDD[LabeledPoint],
+                      strategy: Strategy,
+                      numTrees: Int,
+                      featureSubsetStrategy: String,
+                      seed: Int): RandomForestModel = {
+    require(strategy.algo == Regression,
+      s"RandomForest.trainRegressor given Strategy with invalid algo: ${strategy.algo}")
+    val rf = new RandomForest(strategy, numTrees,
+      DecisionTreeMetadata.buildFeatureSubsetStrategy(featureSubsetStrategy,
+                                                      numTrees, strategy.algo), seed)
+    rf.run(input)
+  }
+
+  /**
+   * Method to train a decision tree model for regression.
+   *
+   * @param input Training dataset: RDD of [[org.apache.spark.mllib.regression.LabeledPoint]].
+   *              Labels are real numbers.
+   * @param categoricalFeaturesInfo Map storing arity of categorical features.
+   *                                E.g., an entry (n -> k) indicates that feature n is categorical
+   *                                with k categories indexed from 0: {0, 1, ..., k-1}.
+   * @param numTrees Number of trees in the random forest.
+   * @param featureSubsetStrategy Number of features to consider for splits at each node.
+   *                              Supported: "auto", "all", "sqrt", "log2", "onethird".
+   *                              If "auto" is set, this parameter is set based on numTrees:
+   *                                if numTrees == 1, set to "all";
+   *                                if numTrees > 1 (forest) set to "onethird".
+   * @param impurity Criterion used for information gain calculation.
+   *                 Supported values: "variance".
+   * @param maxDepth Maximum depth of the tree.
+   *                 E.g., depth 0 means 1 leaf node; depth 1 means 1 internal node + 2 leaf nodes.
+   *                  (suggested value: 4)
+   * @param maxBins maximum number of bins used for splitting features
+   *                 (suggested value: 100)
+   * @param seed  Random seed for bootstrapping and choosing feature subsets.
+   * @return a random forest model that can be used for prediction
+   */
+  def trainRegressor(
+                      input: RDD[LabeledPoint],
+                      categoricalFeaturesInfo: Map[Int, Int],
+                      numTrees: Int,
+                      featureSubsetStrategy: String,
+                      impurity: String,
+                      maxDepth: Int,
+                      maxBins: Int,
+                      seed: Int = Utils.random.nextInt()): RandomForestModel = {
+    val impurityType = Impurities.fromString(impurity)
+    val strategy = new Strategy(Regression, impurityType, maxDepth,
+      0, maxBins, Sort, categoricalFeaturesInfo)
+    trainRegressor(input, strategy, numTrees, featureSubsetStrategy, seed)
+  }
+
 
   /**
    * List of supported feature subset sampling strategies.

@@ -96,6 +96,44 @@ private[tree] class DecisionTreeMetadata(
 
 private[tree] object DecisionTreeMetadata extends Logging {
 
+  def buildFeatureSubsetStrategy(featureSubsetStrategy: String,
+                                 numTrees: Int, algo: Algo): Int => Int = {
+
+    val _featureSubsetStrategy = featureSubsetStrategy match {
+      case "auto" =>
+        if (numTrees == 1) {
+          "all"
+        } else {
+          if (algo == Classification) {
+            "sqrt"
+          } else {
+            "onethird"
+          }
+        }
+      case _ => featureSubsetStrategy
+    }
+
+    val numFeaturesPerNodeRule: Int => Int = _featureSubsetStrategy match {
+      case "all" => x => x
+      case "sqrt" => x => math.sqrt(x).ceil.toInt
+      case "log2" => x => math.max(1, (math.log(x) / math.log(2)).ceil.toInt)
+      case "onethird" => x => (x / 3.0).ceil.toInt
+    }
+    numFeaturesPerNodeRule
+  }
+
+  def buildMetadata (
+    input: RDD[LabeledPoint],
+    strategy: Strategy,
+    numTrees: Int,
+    featureSubsetStrategy: String): DecisionTreeMetadata = {
+
+    val numFeaturesPerNodeRule = buildFeatureSubsetStrategy(featureSubsetStrategy,
+       numTrees, strategy.algo)
+    buildMetadata(input, strategy, numTrees, numFeaturesPerNodeRule)
+  }
+
+
   /**
    * Construct a [[DecisionTreeMetadata]] instance for this dataset and parameters.
    * This computes which categorical features will be ordered vs. unordered,
@@ -105,7 +143,7 @@ private[tree] object DecisionTreeMetadata extends Logging {
       input: RDD[LabeledPoint],
       strategy: Strategy,
       numTrees: Int,
-      featureSubsetStrategy: String): DecisionTreeMetadata = {
+      featureSubsetStrategy: Int => Int): DecisionTreeMetadata = {
 
     val numFeatures = input.take(1)(0).features.size
     val numExamples = input.count()
@@ -155,26 +193,7 @@ private[tree] object DecisionTreeMetadata extends Logging {
       }
     }
 
-    // Set number of features to use per node (for random forests).
-    val _featureSubsetStrategy = featureSubsetStrategy match {
-      case "auto" =>
-        if (numTrees == 1) {
-          "all"
-        } else {
-          if (strategy.algo == Classification) {
-            "sqrt"
-          } else {
-            "onethird"
-          }
-        }
-      case _ => featureSubsetStrategy
-    }
-    val numFeaturesPerNode: Int = _featureSubsetStrategy match {
-      case "all" => numFeatures
-      case "sqrt" => math.sqrt(numFeatures).ceil.toInt
-      case "log2" => math.max(1, (math.log(numFeatures) / math.log(2)).ceil.toInt)
-      case "onethird" => (numFeatures / 3.0).ceil.toInt
-    }
+    val numFeaturesPerNode = featureSubsetStrategy(numFeatures)
 
     new DecisionTreeMetadata(numFeatures, numExamples, numClasses, numBins.max,
       strategy.categoricalFeaturesInfo, unorderedFeatures.toSet, numBins,

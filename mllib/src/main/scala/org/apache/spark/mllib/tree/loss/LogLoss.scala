@@ -47,7 +47,7 @@ object LogLoss extends Loss {
       model: TreeEnsembleModel,
       point: LabeledPoint): Double = {
     val prediction = model.predict(point.features)
-    - 4.0 * point.label / (1.0 + math.exp(2.0 * point.label * prediction))
+    -2.0 * point.label / (1.0 + math.exp(2.0 * point.label * prediction))
   }
 
   /**
@@ -71,4 +71,5 @@ object LogLoss extends Loss {
       }
     }.mean()
   }
+
 }

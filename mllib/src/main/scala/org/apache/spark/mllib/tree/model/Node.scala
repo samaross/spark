@@ -98,6 +98,26 @@ class Node (
     }
   }
 
+  def getNodeId(features: Vector) : Int = {
+    if (isLeaf) {
+      id
+    } else{
+      if (split.get.featureType == Continuous) {
+        if (features(split.get.feature) <= split.get.threshold) {
+          leftNode.get.getNodeId(features)
+        } else {
+          rightNode.get.getNodeId(features)
+        }
+      } else {
+        if (split.get.categories.contains(features(split.get.feature))) {
+          leftNode.get.getNodeId(features)
+        } else {
+          rightNode.get.getNodeId(features)
+        }
+      }
+    }
+  }
+
   /**
    * Returns a deep copy of the subtree rooted at this node.
    */

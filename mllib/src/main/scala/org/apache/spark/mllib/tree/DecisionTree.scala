@@ -17,6 +17,10 @@
 
 package org.apache.spark.mllib.tree
 
+import java.util.Random
+
+import org.apache.spark.util.Utils
+
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
@@ -60,10 +64,19 @@ class DecisionTree (private val strategy: Strategy) extends Serializable with Lo
    */
   def run(input: RDD[LabeledPoint]): DecisionTreeModel = {
     // Note: random seed will not be used since numTrees = 1.
-    val rf = new RandomForest(strategy, numTrees = 1, featureSubsetStrategy = "all", seed = 0)
+    val rf = new RandomForest(strategy, numTrees = 1, featureSubsetStrategy = x => x, seed = 0)
     val rfModel = rf.run(input)
     rfModel.trees(0)
   }
+
+
+  def run(input: RDD[LabeledPoint], featureSubsetStrategy: Int => Int ): DecisionTreeModel = {
+    val rf = new RandomForest(strategy, numTrees = 1, featureSubsetStrategy,
+                  seed = Utils.random.nextInt)
+    val rfModel = rf.run(input)
+    rfModel.trees(0)
+  }
+
 
   /**
    * Trains a decision tree model over an RDD. This is deprecated because it hides the static

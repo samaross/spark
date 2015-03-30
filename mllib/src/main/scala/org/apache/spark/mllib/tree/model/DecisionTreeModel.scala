@@ -43,6 +43,10 @@ class DecisionTreeModel(val topNode: Node, val algo: Algo) extends Serializable 
     topNode.predict(features)
   }
 
+  def getNodeId(features: Vector): Int= {
+    topNode.getNodeId(features)
+  }
+
   /**
    * Predict values for the given data set using the model trained.
    *
@@ -98,5 +102,7 @@ class DecisionTreeModel(val topNode: Node, val algo: Algo) extends Serializable 
     val header = toString + "\n"
     header + topNode.subtreeToString(2)
   }
+
+
 
 }
