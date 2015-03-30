@@ -42,8 +42,8 @@ case class BoostingStrategy(
     @BeanProperty var loss: Loss,
     // Optional boosting parameters
     @BeanProperty var numIterations: Int = 100,
-    @BeanProperty var learningRate: Double = 0.1) extends Serializable {
-
+    @BeanProperty var learningRate: Double = 0.1,
+    @BeanProperty var featureSubsetSelection: Int => Int = x => x) extends Serializable {
   /**
    * Check validity of parameters.
    * Throws exception if invalid.

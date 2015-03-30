@@ -25,7 +25,7 @@ import org.apache.spark.mllib.tree.configuration.BoostingStrategy
 import org.apache.spark.mllib.tree.configuration.Algo._
 import org.apache.spark.mllib.tree.impl.TimeTracker
 import org.apache.spark.mllib.tree.impurity.Variance
-import org.apache.spark.mllib.tree.model.{DecisionTreeModel, GradientBoostedTreesModel}
+import org.apache.spark.mllib.tree.model.{Predict, Node, DecisionTreeModel, GradientBoostedTreesModel}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.storage.StorageLevel
 
@@ -113,7 +113,8 @@ object GradientBoostedTrees extends Logging {
    */
   private def boost(
       input: RDD[LabeledPoint],
-      boostingStrategy: BoostingStrategy): GradientBoostedTreesModel = {
+      boostingStrategy: BoostingStrategy,
+      featureSubsetSelection: Int => Int = x => x): GradientBoostedTreesModel = {
 
     val timer = new TimeTracker()
     timer.start("total")
@@ -147,16 +148,29 @@ object GradientBoostedTrees extends Logging {
 
     // Initialize tree
     timer.start("building tree 0")
-    val firstTreeModel = new DecisionTree(treeStrategy).run(data)
+
+
+    val avgPos = input.map(_.label).collect.sum/input.count
+    val startingHalfLogOdds = 0.5 * Math.log((1 + avgPos)/(1 - avgPos))
+    val topNode = Node.apply(0,new Predict(startingHalfLogOdds,startingHalfLogOdds),0,true)
+    val firstTreeModel = new DecisionTreeModel(topNode, Regression)
     baseLearners(0) = firstTreeModel
     baseLearnerWeights(0) = 1.0
-    val startingModel = new GradientBoostedTreesModel(Regression, Array(firstTreeModel), Array(1.0))
-    logDebug("error of gbt = " + loss.computeError(startingModel, input))
+
+
+    //val firstTreeModel = new DecisionTree(treeStrategy).run(data,
+    //  boostingStrategy.featureSubsetSelection)
+    //baseLearners(0) = firstTreeModel
+    //baseLearnerWeights(0) = 1.0
+
+    var partialModel =
+      new GradientBoostedTreesModel(Regression, Array(firstTreeModel), Array(1.0))
+    logDebug("error of gbt = " + loss.computeError(partialModel, input))
     // Note: A model of type regression is used since we require raw prediction
     timer.stop("building tree 0")
 
-    // psuedo-residual for second iteration
-    data = input.map(point => LabeledPoint(loss.gradient(startingModel, point),
+    // pseudo-residual for second iteration
+    data = input.map(point => LabeledPoint(-loss.gradient(partialModel, point),
       point.features))
 
     var m = 1
@@ -165,7 +179,9 @@ object GradientBoostedTrees extends Logging {
       logDebug("###################################################")
       logDebug("Gradient boosting tree iteration " + m)
       logDebug("###################################################")
-      val model = new DecisionTree(treeStrategy).run(data)
+      val model = new DecisionTree(treeStrategy).run(data,
+              boostingStrategy.featureSubsetSelection)
+      updateTree(model,partialModel,input)
       timer.stop(s"building tree $m")
       // Create partial model
       baseLearners(m) = model
@@ -174,7 +190,7 @@ object GradientBoostedTrees extends Logging {
       //       However, the behavior should be reasonable, though not optimal.
       baseLearnerWeights(m) = learningRate
       // Note: A model of type regression is used since we require raw prediction
-      val partialModel = new GradientBoostedTreesModel(
+      partialModel = new GradientBoostedTreesModel(
         Regression, baseLearners.slice(0, m + 1), baseLearnerWeights.slice(0, m + 1))
       logDebug("error of gbt = " + loss.computeError(partialModel, input))
       // Update data with pseudo-residuals
@@ -191,4 +207,38 @@ object GradientBoostedTrees extends Logging {
     new GradientBoostedTreesModel(
       boostingStrategy.treeStrategy.algo, baseLearners, baseLearnerWeights)
   }
+
+  def updateTree(tree: DecisionTreeModel, partialModel: GradientBoostedTreesModel,
+                 input: RDD[LabeledPoint]) {
+    val triples = input.map(point => (point.label,tree.getNodeId(point.features),
+                        partialModel.predict(point.features)))
+                       .groupBy(triple => triple._2).collect
+    val newData = triples.map(newValue)
+    for (d <- newData) {
+      val id = d._1
+      val newVal = d._2
+      Node.getNode(id,tree.topNode).predict = new Predict(newVal,newVal)
+    }
+  }
+
+  def newValue(nodeData: (Int,Iterable[(Double,Int,Double)])): (Int,Double) = {
+    val id = nodeData._1
+    val data = nodeData._2
+    val pseudoResponses = data.toArray.map{case (label,id,prediction) =>
+      2.0 * label/(1.0 + Math.exp(2.0 * label * prediction))}
+
+
+    val numerator = pseudoResponses.sum
+    var denominator = 0.0
+    for (pr <- pseudoResponses) {
+      denominator = denominator + Math.abs(pr) * (2.0 - Math.abs(pr))
+    }
+
+    //(id, pseudoResponses.sum/pseudoResponses.size)
+    (id, numerator/denominator)
+  }
+
+
+
+
 }
